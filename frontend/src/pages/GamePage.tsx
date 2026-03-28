@@ -4,22 +4,15 @@ import { Session, Socket } from "@heroiclabs/nakama-js";
 
 import client from "../utils/nakamaClient";
 
-
-
 interface Props {
-
   session: Session;
 
   matchId: string;
 
   onLeave: () => void;
-
 }
 
-
-
 interface Player {
-
   userId: string;
 
   username: string;
@@ -27,13 +20,9 @@ interface Player {
   symbol: string;
 
   connected: boolean;
-
 }
 
-
-
 interface GameState {
-
   board: string[];
 
   players: { [key: string]: Player };
@@ -47,15 +36,10 @@ interface GameState {
   turnTimeLimit?: number;
 
   turnStartTime?: number;
-
 }
 
-
-
 const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
-
   const [gameState, setGameState] = useState<GameState>({
-
     board: ["", "", "", "", "", "", "", "", ""],
 
     players: {},
@@ -63,7 +47,6 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
     currentTurn: "",
 
     status: "waiting",
-
   });
 
   const [mySymbol, setMySymbol] = useState<string>("");
@@ -84,104 +67,66 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-
-
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-
     connectToMatch();
 
     return () => {
-
       if (socketRef.current) {
-
         socketRef.current.disconnect(true);
-
       }
 
       if (timerRef.current) {
-
         clearInterval(timerRef.current);
-
       }
-
     };
-
   }, []);
 
-
-
   const startTimer = (duration: number) => {
-
     if (timerRef.current) {
-
       clearInterval(timerRef.current);
-
     }
 
     setTimeRemaining(duration);
 
     timerRef.current = setInterval(() => {
-
       setTimeRemaining((prev) => {
-
         if (prev === null || prev <= 1) {
-
           if (timerRef.current) clearInterval(timerRef.current);
 
           return 0;
-
         }
 
         return prev - 1;
-
       });
-
     }, 1000);
-
   };
 
-
-
   const connectToMatch = async () => {
-
     try {
-
       const sock = client.createSocket(false, true);
 
       socketRef.current = sock;
 
-
-
       sock.onmatchdata = (matchData) => {
-
         const opcode = matchData.op_code;
 
         let data: any = {};
 
         try {
-
           if (matchData.data) {
-
             const decoder = new TextDecoder();
 
             data = JSON.parse(decoder.decode(matchData.data));
-
           }
-
         } catch (e) {
-
           console.error("Failed to parse match data", e);
-
         }
 
-
-
         if (opcode === 1) {
-
           // match_start
 
           setGameState({
-
             board: data.board,
 
             players: data.players,
@@ -193,83 +138,58 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
             gameMode: data.gameMode,
 
             turnTimeLimit: data.turnTimeLimit,
-
           });
 
           const me = data.players[session.user_id!];
 
           if (me) {
-
             setMySymbol(me.symbol);
 
             setStatusMsg(
-
               data.currentTurn === session.user_id
-
                 ? "Your turn! (" + me.symbol + ")"
-
                 : "Opponent's turn",
-
             );
-
           }
 
           if (data.turnTimeLimit > 0) {
-
             startTimer(data.turnTimeLimit);
-
           }
-
         } else if (opcode === 2) {
-
           // state_update
 
           setGameState((prev) => ({
-
             ...prev,
 
             board: data.board,
 
             currentTurn: data.currentTurn,
-
           }));
 
           setStatusMsg(
-
             data.currentTurn === session.user_id
-
               ? "Your turn!"
-
               : "Opponent's turn",
-
           );
 
           if (data.lastMove) {
-
             setLastMove(data.lastMove.position);
 
             setTimeout(() => setLastMove(null), 600);
-
           }
 
           if (gameState.turnTimeLimit && gameState.turnTimeLimit > 0) {
-
             startTimer(gameState.turnTimeLimit);
-
           }
-
         } else if (opcode === 3) {
-
           // game_over
 
           setGameState((prev) => ({
-
             ...prev,
 
             board: data.board,
 
             status: "finished",
-
           }));
 
           setGameOver(true);
@@ -279,21 +199,13 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
           localStorage.removeItem(`activeMatch_${session.user_id}`);
 
           if (data.isDraw) {
-
             setGameOverMsg("It's a Draw! 🤝");
-
           } else if (data.winner === session.user_id) {
-
             setGameOverMsg("You Win! 🎉 +3 pts");
-
           } else {
-
             setGameOverMsg("You Lose 😔");
-
           }
-
         } else if (opcode === 4) {
-
           // player_left - opponent forfeited by disconnecting
 
           if (timerRef.current) {
@@ -310,51 +222,46 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
           setGameOverMsg(
             data.winner === session.user_id
               ? "You Win by Forfeit! 🏆"
-              : "Opponent disconnected."
+              : "Opponent disconnected.",
           );
 
           // Clear active match - opponent left
 
           localStorage.removeItem(`activeMatch_${session.user_id}`);
-
         } else if (opcode === 5) {
-
           // timeout
 
           setGameOver(true);
 
-          setGameOverMsg(data.message + (data.winner === session.user_id ? " You Win! 🎉" : " You Lose! ⏱️"));
+          setGameOverMsg(
+            data.message +
+              (data.winner === session.user_id
+                ? " You Win! 🎉"
+                : " You Lose! ⏱️"),
+          );
 
           // Clear active match - game ended by timeout
 
           localStorage.removeItem(`activeMatch_${session.user_id}`);
 
           if (timerRef.current) clearInterval(timerRef.current);
-
         } else if (opcode === 99) {
-
           // error
 
           setError(data.message);
 
           setTimeout(() => setError(""), 2000);
-
         }
-
       };
 
-
-
       sock.ondisconnect = () => {
-
         setStatusMsg("Disconnected from server");
-
       };
 
       // Handle match presence events to detect when players join/leave
       sock.onmatchpresence = (matchPresence) => {
         console.log("Match presence event:", matchPresence);
-        
+
         // Check if we have 2 players (game is ready to start)
         if (matchPresence.joins && matchPresence.joins.length > 0) {
           console.log("Player(s) joined:", matchPresence.joins.length);
@@ -363,7 +270,7 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
             console.log("Player joined:", join.username);
           });
         }
-        
+
         if (matchPresence.leaves && matchPresence.leaves.length > 0) {
           console.log("Player(s) left:", matchPresence.leaves.length);
         }
@@ -374,21 +281,14 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
       await sock.joinMatch(matchId);
 
       setStatusMsg("Joined match! Waiting for opponent...");
-
     } catch (e: any) {
-
       console.error("Failed to connect", e);
 
       setStatusMsg("Failed to connect: " + (e?.message || String(e)));
-
     }
-
   };
 
-
-
   const handleCellClick = async (index: number) => {
-
     if (!socketRef.current || gameOver) return;
 
     if (gameState.status !== "playing") return;
@@ -397,28 +297,18 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
 
     if (gameState.board[index] !== "") return;
 
-
-
     try {
-
       const move = JSON.stringify({ position: index });
 
       const encoder = new TextEncoder();
 
       await socketRef.current.sendMatchState(matchId, 1, encoder.encode(move));
-
     } catch (e) {
-
       console.error("Failed to send move", e);
-
     }
-
   };
 
-
-
   const cellStyle = (value: string, index: number): React.CSSProperties => ({
-
     width: "clamp(84px, 16vw, 120px)",
 
     height: "clamp(84px, 16vw, 120px)",
@@ -434,19 +324,13 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
     fontWeight: 800,
 
     cursor:
-
       value === "" && gameState.currentTurn === session.user_id && !gameOver
-
         ? "pointer"
-
         : "default",
 
     background:
-
       lastMove === index
-
         ? "linear-gradient(145deg, rgba(255,88,126,0.38) 0%, rgba(98,201,255,0.3) 100%)"
-
         : "linear-gradient(145deg, rgba(19,31,66,0.95) 0%, rgba(11,22,50,0.95) 100%)",
 
     borderRadius: "16px",
@@ -460,61 +344,40 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
     transform: lastMove === index ? "scale(1.06)" : "scale(1)",
 
     boxShadow:
-
       lastMove === index
-
         ? "0 0 24px rgba(255,102,143,0.45), inset 0 0 20px rgba(255,255,255,0.08)"
-
         : "inset 0 0 14px rgba(255,255,255,0.03)",
 
     userSelect: "none",
-
   });
 
-
-
   return (
-
     <div
-
       style={{
-
         minHeight: "100vh",
 
         background:
-
           "radial-gradient(circle at 14% 10%, rgba(95,190,255,0.2) 0%, transparent 34%), radial-gradient(circle at 86% 90%, rgba(255,95,140,0.19) 0%, transparent 38%), linear-gradient(145deg, #080d1f 0%, #101a3a 55%, #0d1530 100%)",
 
         padding: "20px 14px 34px",
-
       }}
-
     >
-
       <div
-
         style={{
-
           maxWidth: "980px",
 
           margin: "0 auto",
 
           animation: "fadeIn 0.35s ease-out",
-
         }}
-
       >
-
         <div
-
           style={{
-
             borderRadius: "20px",
 
             border: "1px solid rgba(255,255,255,0.1)",
 
             background:
-
               "linear-gradient(130deg, rgba(14,24,58,0.86) 0%, rgba(23,41,88,0.86) 100%)",
 
             boxShadow: "0 16px 38px rgba(0,0,0,0.45)",
@@ -522,15 +385,10 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
             padding: "18px",
 
             marginBottom: "14px",
-
           }}
-
         >
-
           <div
-
             style={{
-
               display: "flex",
 
               flexWrap: "wrap",
@@ -540,15 +398,10 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
               justifyContent: "space-between",
 
               alignItems: "center",
-
             }}
-
           >
-
             <h2
-
               style={{
-
                 margin: 0,
 
                 color: "#fff",
@@ -556,27 +409,18 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
                 fontWeight: 800,
 
                 fontSize: "clamp(22px, 4vw, 34px)",
-
               }}
-
             >
-
               Match Arena
-
             </h2>
 
             <button
-
               onClick={() => {
-
                 navigator.clipboard.writeText(matchId);
 
                 alert("Match ID copied!");
-
               }}
-
               style={{
-
                 borderRadius: "10px",
 
                 border: "1px solid rgba(151,210,255,0.55)",
@@ -590,21 +434,14 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
                 fontWeight: 700,
 
                 cursor: "pointer",
-
               }}
-
             >
-
               Copy Match ID
-
             </button>
-
           </div>
 
           <p
-
             style={{
-
               margin: "10px 0 0",
 
               color: "#9fb7df",
@@ -614,23 +451,14 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
               fontSize: "12px",
 
               wordBreak: "break-all",
-
             }}
-
           >
-
             {matchId}
-
           </p>
-
         </div>
 
-
-
         <div
-
           style={{
-
             display: "grid",
 
             gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
@@ -638,15 +466,10 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
             gap: "14px",
 
             alignItems: "start",
-
           }}
-
         >
-
           <div
-
             style={{
-
               borderRadius: "18px",
 
               border: "1px solid rgba(255,255,255,0.09)",
@@ -654,15 +477,10 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
               background: "rgba(10,20,48,0.82)",
 
               padding: "16px",
-
             }}
-
           >
-
             <div
-
               style={{
-
                 borderRadius: "12px",
 
                 background: "rgba(255,255,255,0.03)",
@@ -676,65 +494,40 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
                 fontWeight: 600,
 
                 lineHeight: 1.4,
-
               }}
-
             >
-
               {statusMsg}
 
               {mySymbol && (
-
                 <span
-
                   style={{
-
                     color: mySymbol === "X" ? "#ff7e9f" : "#80dbff",
 
                     marginLeft: "8px",
 
                     fontWeight: 800,
-
                   }}
-
                 >
-
                   (You are {mySymbol})
-
                 </span>
-
               )}
-
             </div>
 
-
-
             {gameState.gameMode === "timed" &&
-
               timeRemaining !== null &&
-
               !gameOver && (
-
                 <div
-
                   style={{
-
                     borderRadius: "12px",
 
                     border:
-
                       timeRemaining <= 10
-
                         ? "1px solid rgba(255,128,128,0.75)"
-
                         : "1px solid rgba(123,212,255,0.5)",
 
                     background:
-
                       timeRemaining <= 10
-
                         ? "rgba(255,92,122,0.2)"
-
                         : "rgba(39,130,255,0.2)",
 
                     color: "#fff",
@@ -749,26 +542,20 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
 
                     marginBottom: "12px",
 
-                    animation: timeRemaining <= 5 ? "pulse 1s infinite" : "none",
-
+                    animation:
+                      timeRemaining <= 5 ? "pulse 1s infinite" : "none",
                   }}
-
                 >
-
-                  <span role="img" aria-label="timer">⏱️</span> {timeRemaining}s
-
+                  <span role="img" aria-label="timer">
+                    ⏱️
+                  </span>{" "}
+                  {timeRemaining}s
                 </div>
-
               )}
 
-
-
             {error && (
-
               <div
-
                 style={{
-
                   borderRadius: "10px",
 
                   padding: "10px 12px",
@@ -782,27 +569,16 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
                   color: "#ffd8e4",
 
                   animation: "shake 0.45s",
-
                 }}
-
               >
-
                 {error}
-
               </div>
-
             )}
 
-
-
             {!gameOver && (
-
               <button
-
                 onClick={onLeave}
-
                 style={{
-
                   width: "100%",
 
                   borderRadius: "10px",
@@ -818,25 +594,15 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
                   cursor: "pointer",
 
                   fontWeight: 700,
-
                 }}
-
               >
-
                 Leave Match
-
               </button>
-
             )}
-
           </div>
 
-
-
           <div
-
             style={{
-
               borderRadius: "18px",
 
               border: "1px solid rgba(255,255,255,0.09)",
@@ -844,15 +610,10 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
               background: "rgba(10,20,48,0.82)",
 
               padding: "16px",
-
             }}
-
           >
-
             <div
-
               style={{
-
                 display: "grid",
 
                 gridTemplateColumns: "repeat(3, clamp(84px, 16vw, 120px))",
@@ -862,39 +623,22 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
                 justifyContent: "center",
 
                 marginBottom: gameOver ? "14px" : 0,
-
               }}
-
             >
-
               {gameState.board.map((cell, index) => (
-
                 <div
-
                   key={index}
-
                   style={cellStyle(cell, index)}
-
                   onClick={() => handleCellClick(index)}
-
                 >
-
                   {cell}
-
                 </div>
-
               ))}
-
             </div>
 
-
-
             {gameOver && (
-
               <div
-
                 style={{
-
                   borderRadius: "14px",
 
                   border: "1px solid rgba(255,255,255,0.14)",
@@ -904,41 +648,28 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
                   textAlign: "center",
 
                   padding: "16px",
-
                 }}
-
               >
-
                 <h2
-
                   style={{
-
                     margin: "0 0 12px",
 
                     color: "#fff",
 
                     fontSize: "clamp(22px, 4vw, 30px)",
-
                   }}
-
                 >
-
                   {gameOverMsg}
-
                 </h2>
 
                 <button
-
                   onClick={onLeave}
-
                   style={{
-
                     borderRadius: "10px",
 
                     border: "none",
 
                     background:
-
                       "linear-gradient(130deg, rgba(255,95,140,1) 0%, rgba(124,142,255,1) 100%)",
 
                     color: "white",
@@ -948,31 +679,17 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
                     fontWeight: 800,
 
                     cursor: "pointer",
-
                   }}
-
                 >
-
                   Back to Lobby
-
                 </button>
-
               </div>
-
             )}
-
           </div>
-
         </div>
-
       </div>
-
     </div>
-
   );
-
 };
-
-
 
 export default GamePage;
