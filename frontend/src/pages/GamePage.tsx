@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Session, Socket } from "@heroiclabs/nakama-js";
 
 import client from "../utils/nakamaClient";
+/* eslint-disable react-hooks/exhaustive-deps */
 
 interface Props {
   session: Session;
@@ -67,7 +68,6 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     connectToMatch();
 
