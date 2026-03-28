@@ -104,7 +104,8 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave }) => {
 
   const connectToMatch = async () => {
     try {
-      const sock = client.createSocket(false, true);
+      const useSSL = process.env.REACT_APP_NAKAMA_SSL === "true";
+      const sock = client.createSocket(useSSL, true);
 
       socketRef.current = sock;
 
