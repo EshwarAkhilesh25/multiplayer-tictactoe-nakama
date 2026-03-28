@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "strict": false,
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "outFile": "./modules/main.js",
+    "rootDir": "./src",
+    "typeRoots": ["./node_modules"],
+    "types": ["nakama-runtime"],
+    "preserveConstEnums": true
+  },
+  "files": ["src/main.ts"],
+  "exclude": ["node_modules"]
+}
