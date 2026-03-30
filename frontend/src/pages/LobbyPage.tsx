@@ -345,7 +345,7 @@ const LobbyPage: React.FC<Props> = ({ session, onJoinMatch, onLogout }) => {
                   boxShadow: "0 10px 24px rgba(31,139,255,0.35)",
                 }}
               >
-                {session.username?.charAt(0).toUpperCase() || "U"}
+                {(localStorage.getItem("lastDisplayName") || session.username)?.charAt(0).toUpperCase() || "U"}
               </div>
               <div>
                 <div
@@ -368,7 +368,7 @@ const LobbyPage: React.FC<Props> = ({ session, onJoinMatch, onLogout }) => {
                   }}
                 >
                   {isNewUser ? "Welcome, Captain" : "Great to see you again"}{" "}
-                  <span style={{ color: "#7ad3ff" }}>{session.username || "Player"}</span>
+                  <span style={{ color: "#7ad3ff" }}>{localStorage.getItem("lastDisplayName") || session.username || "Player"}</span>
                 </h1>
                 <p style={{ margin: "7px 0 0", color: "#9fb3d8", fontSize: "13px" }}>
                   <span style={{ fontFamily: "monospace", letterSpacing: "1px", color: "#a0c4ff" }}>
@@ -868,6 +868,15 @@ const LobbyPage: React.FC<Props> = ({ session, onJoinMatch, onLogout }) => {
                               fontSize: "11px",
                               fontWeight: 700,
                             }}>YOU</span>
+                          )}
+                          {record.playerId && (
+                            <span style={{
+                              marginLeft: "6px",
+                              color: "rgba(160,184,216,0.6)",
+                              fontSize: "11px",
+                              fontFamily: "monospace",
+                              fontWeight: 500,
+                            }}>({record.playerId})</span>
                           )}
                         </div>
                         {isTop3 && (

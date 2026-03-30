@@ -828,148 +828,80 @@ const GamePage: React.FC<Props> = ({ session, matchId, onLeave, onLogout }) => {
 
           >
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
-
-              <div>
-
-                <h2
-
-                  style={{
-
-                    margin: 0,
-
-                    color: "#fff",
-
-                    fontWeight: 800,
-
-                    fontSize: "clamp(22px, 4vw, 34px)",
-
-                  }}
-
-                >
-
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <h2 style={{ margin: 0, color: "#fff", fontWeight: 800, fontSize: "clamp(22px, 4vw, 34px)" }}>
                   Match Arena
-
                 </h2>
-
-              </div>
-
-              
-
-              <div style={{
-
-                display: "flex",
-
-                alignItems: "center",
-
-                gap: "12px",
-
-                padding: "8px 16px",
-
-                borderRadius: "12px",
-
-                background: "rgba(255,255,255,0.05)",
-
-                border: "1px solid rgba(255,255,255,0.1)",
-
-                backdropFilter: "blur(10px)"
-
-              }}>
-
-                <div style={{
-
-                  display: "flex",
-
-                  alignItems: "center",
-
-                  gap: "8px"
-
-                }}>
-
-                  <div style={{
-
-                    width: "8px",
-
-                    height: "8px",
-
-                    borderRadius: "50%",
-
-                    background: "#4ade80",
-
-                    boxShadow: "0 0 12px rgba(74, 222, 128, 0.6)",
-
-                    animation: "pulse 2s infinite"
-
-                  }}></div>
-
-                  <span style={{
-
-                    color: "#fff",
-
-                    fontSize: "clamp(14px, 2vw, 16px)",
-
-                    fontWeight: 600,
-
-                  }}>
-
-                    {session.username || "Player"}
-
-                  </span>
-
-                </div>
-
-                
-
                 {mySymbol && (
-
                   <div style={{
-
                     padding: "4px 10px",
-
                     borderRadius: "8px",
-
-                    background: mySymbol === "X" 
-
+                    background: mySymbol === "X"
                       ? "linear-gradient(135deg, rgba(239,68,68,0.2) 0%, rgba(220,38,38,0.3) 100%)"
-
                       : "linear-gradient(135deg, rgba(59,130,246,0.2) 0%, rgba(37,99,235,0.3) 100%)",
-
                     border: `1px solid ${mySymbol === "X" ? "rgba(239,68,68,0.4)" : "rgba(59,130,246,0.4)"}`,
-
-                    boxShadow: mySymbol === "X" 
-
-                      ? "0 2px 8px rgba(239,68,68,0.3)"
-
-                      : "0 2px 8px rgba(59,130,246,0.3)"
-
                   }}>
-
                     <span style={{
-
                       color: mySymbol === "X" ? "#f87171" : "#60a5fa",
-
                       fontSize: "clamp(12px, 1.8vw, 14px)",
-
                       fontWeight: 700,
-
-                      textShadow: mySymbol === "X" 
-
-                        ? "0 0 8px rgba(239,68,68,0.5)"
-
-                        : "0 0 8px rgba(59,130,246,0.5)"
-
                     }}>
-
-                      {mySymbol}
-
+                      You are {mySymbol}
                     </span>
-
                   </div>
-
                 )}
-
               </div>
-
+              {/* Player A vs Player B */}
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "12px",
+                padding: "10px 16px",
+                borderRadius: "12px",
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.1)",
+              }}>
+                {(() => {
+                  const players = Object.values(gameState.players);
+                  const me = players.find(p => p.userId === session.user_id);
+                  const opponent = players.find(p => p.userId !== session.user_id);
+                  const myName = me?.username || localStorage.getItem("lastDisplayName") || "You";
+                  const opponentName = opponent?.username || "Waiting...";
+                  return (
+                    <>
+                      <span style={{
+                        color: me?.symbol === "X" ? "#f87171" : "#60a5fa",
+                        fontWeight: 800,
+                        fontSize: "clamp(16px, 3vw, 22px)",
+                        textShadow: me?.symbol === "X"
+                          ? "0 0 10px rgba(239,68,68,0.4)"
+                          : "0 0 10px rgba(59,130,246,0.4)",
+                      }}>
+                        {myName} ({me?.symbol || "?"})
+                      </span>
+                      <span style={{
+                        color: "#64748b",
+                        fontWeight: 700,
+                        fontSize: "clamp(14px, 2.5vw, 18px)",
+                      }}>
+                        vs
+                      </span>
+                      <span style={{
+                        color: opponent?.symbol === "X" ? "#f87171" : "#60a5fa",
+                        fontWeight: 800,
+                        fontSize: "clamp(16px, 3vw, 22px)",
+                        textShadow: opponent?.symbol === "X"
+                          ? "0 0 10px rgba(239,68,68,0.4)"
+                          : "0 0 10px rgba(59,130,246,0.4)",
+                      }}>
+                        {opponentName} {opponent ? `(${opponent.symbol})` : ""}
+                      </span>
+                    </>
+                  );
+                })()}
+              </div>
             </div>
 
 

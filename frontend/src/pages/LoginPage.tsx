@@ -16,9 +16,9 @@ const generatePlayerId = (): string => {
   return id;
 };
 
-// Resolve a username to a Player ID via unauthenticated RPC
-const resolveUsername = async (username: string): Promise<{ playerId?: string; error?: string }> => {
-  const host = process.env.REACT_APP_NAKAMA_HOST || "127.0.0.1";
+// Resolve a username to ALL matching Player IDs via unauthenticated RPC
+const resolveUsername = async (username: string): Promise<{ playerIds?: string[]; error?: string }> => {
+  const host = process.env.REACT_APP_NAKAMA_HOST || "localhost";
   const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
   const resp = await fetch(
     `http://${host}:${port}/v2/rpc/find_user_by_name?http_key=defaulthttpkey`,
@@ -34,10 +34,12 @@ const resolveUsername = async (username: string): Promise<{ playerId?: string; e
     return { error: "Failed to look up username. Try using your Player ID." };
   }
   const json = await resp.json();
-  // Nakama wraps the response: { payload: "{...}" }
   const data = json.payload ? JSON.parse(json.payload) : json;
   if (data.error) return { error: data.message };
-  return { playerId: data.playerId };
+  // Support both new array format and old single-value format
+  const playerIds = data.playerIds || (data.playerId ? [data.playerId] : []);
+  if (playerIds.length === 0) return { error: "No account found with that name." };
+  return { playerIds };
 };
 
 const LoginPage: React.FC<Props> = ({ onLogin }) => {
@@ -93,17 +95,37 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
         const newId = generatePlayerId();
         const email = `${newId.toLowerCase()}@tictactoe.game`;
         
+        // Use Player ID as Nakama username (guaranteed unique)
+        // Display name is stored separately and can be shared by multiple users
         const session = await client.authenticateEmail(
-          email, password, true, trimmedName
+          email, password, true, newId
         );
+        
+        // Set the display name on the account (this can be duplicate across users)
+        try {
+          const host = process.env.REACT_APP_NAKAMA_HOST || "localhost";
+          const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
+          
+          // Update account display name via Nakama REST API
+          await fetch(`http://${host}:${port}/v2/account`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${session.token}`
+            },
+            body: JSON.stringify({ display_name: trimmedName })
+          });
+        } catch (e) {
+          console.error("Failed to set display name:", e);
+        }
         
         // Save the Player ID locally
         localStorage.setItem("playerId", newId);
         localStorage.setItem("lastDisplayName", trimmedName);
 
-        // Store username mapping in backend for future lookups
+        // Store username mapping in backend for future lookups (supports multiple users per name)
         try {
-          const host = process.env.REACT_APP_NAKAMA_HOST || "127.0.0.1";
+          const host = process.env.REACT_APP_NAKAMA_HOST || "localhost";
           const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
           const body = JSON.stringify(JSON.stringify({ username: trimmedName, playerId: newId }));
           await fetch(
@@ -112,7 +134,6 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
           );
         } catch (e) {
           console.error("Failed to store username mapping:", e);
-          // Continue anyway - user can still login with Player ID
         }
 
         // Show the Player ID to the user before proceeding
@@ -124,9 +145,9 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
         }, 5000);
       } catch (e: any) {
         console.error("Register error:", e);
-        let msg = "Failed to connect. Is the server running?";
-        if (e?.status) {
-          try { msg = `Server error ${e.status}: ${await e.text()}`; } catch { msg = `Server error ${e.status}`; }
+        let msg = "Failed to connect. Please check your internet connection.";
+        if (e?.statusCode === 409 || e?.status === 409) {
+          msg = "Something went wrong. Please try again.";
         } else if (e instanceof Error) { msg = e.message; }
         setError(msg);
       }
@@ -138,44 +159,135 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
       if (!password) { setError("Password cannot be empty"); return; }
       
       setLoading(true);
+      const host = process.env.REACT_APP_NAKAMA_HOST || "localhost";
+      const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
+      const isIdLogin = trimmedInput.toUpperCase().startsWith("TTT-");
+      
       try {
-        let resolvedId: string;
+        // Build list of emails to try authentication with
+        let emailsToTry: { email: string; nameForAccount: string }[] = [];
         
-        // Check if input looks like a Player ID (starts with TTT-)
-        if (trimmedInput.toUpperCase().startsWith("TTT-")) {
-          resolvedId = trimmedInput.toUpperCase();
+        if (isIdLogin) {
+          // Direct Player ID login
+          emailsToTry.push({
+            email: `${trimmedInput.toLowerCase()}@tictactoe.game`,
+            nameForAccount: "" // will fetch from account
+          });
         } else {
-          // Treat as username — resolve to Player ID via backend
-          const result = await resolveUsername(trimmedInput);
-          if (result.error) {
-            setError(result.error);
-            setLoading(false);
-            return;
+          // Login by display name
+          // 1. Try RPC to find matching Player IDs (new accounts)
+          try {
+            console.log("Login: Calling resolveUsername RPC for", trimmedInput);
+            const result = await resolveUsername(trimmedInput);
+            console.log("Login: RPC result", result);
+            if (result.playerIds && result.playerIds.length > 0) {
+              for (const pid of result.playerIds) {
+                emailsToTry.push({
+                  email: `${pid.toLowerCase()}@tictactoe.game`,
+                  nameForAccount: trimmedInput
+                });
+              }
+            } else {
+              console.log("Login: RPC returned no playerIds");
+            }
+          } catch (e) {
+            console.log("Login: RPC lookup failed, will try direct auth:", e);
           }
-          resolvedId = result.playerId!;
+          
+          // 2. Also try direct auth with name@tictactoe.game (old accounts)
+          emailsToTry.push({
+            email: `${trimmedInput.toLowerCase()}@tictactoe.game`,
+            nameForAccount: trimmedInput
+          });
         }
         
-        const email = `${resolvedId.toLowerCase()}@tictactoe.game`;
-        const session = await client.authenticateEmail(email, password, false);
+        // Deduplicate emails
+        const seen = new Set<string>();
+        emailsToTry = emailsToTry.filter(e => {
+          if (seen.has(e.email)) return false;
+          seen.add(e.email);
+          return true;
+        });
         
-        localStorage.setItem("playerId", resolvedId);
-        localStorage.setItem("lastDisplayName", session.username || "");
-        onLogin(session);
+        // Try each email with the password until one works
+        let loginSuccess = false;
+        console.log("Login: Trying emails", emailsToTry.map(e => e.email));
+        for (const attempt of emailsToTry) {
+          console.log("Login: Attempting auth with", attempt.email);
+          try {
+            const session = await client.authenticateEmail(attempt.email, password, false);
+            console.log("Login: SUCCESS with", attempt.email);
+            
+            // Auth succeeded! Now fix up display name
+            const resolvedId = attempt.email.replace("@tictactoe.game", "").toUpperCase();
+            localStorage.setItem("playerId", resolvedId);
+            
+            // Fetch current display name from account
+            let fetchedDisplayName = "";
+            try {
+              const accResp = await fetch(`http://${host}:${port}/v2/account`, {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${session.token}` }
+              });
+              if (accResp.ok) {
+                const accData = await accResp.json();
+                fetchedDisplayName = accData?.account?.user?.display_name || "";
+              }
+            } catch (e) {
+              console.error("Failed to fetch account:", e);
+            }
+            
+            // Determine display name: fetched > provided name > existing localStorage
+            let finalDisplayName = fetchedDisplayName || attempt.nameForAccount || localStorage.getItem("lastDisplayName") || "";
+            
+            // If we have a name but the account doesn't, set it retroactively
+            if (finalDisplayName && !fetchedDisplayName) {
+              try {
+                await fetch(`http://${host}:${port}/v2/account`, {
+                  method: "PUT",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${session.token}`
+                  },
+                  body: JSON.stringify({ display_name: finalDisplayName })
+                });
+              } catch (e) { console.error("Failed to set display name:", e); }
+            }
+            
+            // Store display name locally and create mappings
+            if (finalDisplayName) {
+              localStorage.setItem("lastDisplayName", finalDisplayName);
+              try {
+                await fetch(
+                  `http://${host}:${port}/v2/rpc/store_username_mapping?http_key=defaulthttpkey`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(JSON.stringify({ username: finalDisplayName, playerId: resolvedId }))
+                  }
+                );
+              } catch (e) { console.error("Failed to store mapping:", e); }
+            }
+            
+            loginSuccess = true;
+            onLogin(session);
+            break;
+          } catch (e: any) {
+            console.log("Auth failed for " + attempt.email + ", trying next...");
+            continue;
+          }
+        }
+        
+        if (!loginSuccess) {
+          if (isIdLogin) {
+            setError("Incorrect password or account not found. Please check your Player ID and password.");
+          } else {
+            setError("No account found with that name and password. Please check your credentials or register a new account.");
+          }
+        }
       } catch (e: any) {
         console.error("Login error:", e);
-        let msg = "Failed to connect. Is the server running?";
-        if (e?.statusCode === 401 || e?.status === 401) {
-          msg = "Incorrect password. Please try again.";
-        } else if (e?.statusCode === 404 || e?.status === 404) {
-          msg = "Account not found. Please check your credentials or register.";
-        } else if (e?.message?.includes("User account not found")) {
-          msg = "Account not found. Please check your credentials or register.";
-        } else if (e?.message?.includes("Invalid credentials")) {
-          msg = "Incorrect password. Please try again.";
-        } else if (e?.status) {
-          try { msg = `Server error ${e.status}: ${await e.text()}`; } catch { msg = `Server error ${e.status}`; }
-        } else if (e instanceof Error) { msg = e.message; }
-        setError(msg);
+        setError("Failed to connect. Please check your internet connection.");
       }
       setLoading(false);
     }
