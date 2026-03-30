@@ -4,14 +4,25 @@ A real-time, multiplayer Tic-Tac-Toe game built with **React + TypeScript** on t
 
 ---
 
+## 🚀 Live Deployment
+
+|                  | URL                                                              |
+| ---------------- | ---------------------------------------------------------------- |
+| 🎮 Game          | https://multiplayer-tictactoe-nakama.vercel.app                  |
+| ⚙️ Nakama Server | http://136.111.140.22:7350                                       |
+| 🖥️ Admin Console | http://136.111.140.22:7351                                       |
+| 📁 Source Code   | https://github.com/EshwarAkhilesh25/multiplayer-tictactoe-nakama |
+
+---
+
 ## Table of Contents
 
-1. [Architecture Overview](#architecture-overview)
-2. [Prerequisites](#prerequisites)
-3. [Setup & Installation](#setup--installation)
-4. [API & Server Configuration](#api--server-configuration)
-5. [Deployment Process](#deployment-process)
-6. [Live Deployment](#-live-deployment)
+1. [Live Deployment](#-live-deployment)
+2. [Architecture Overview](#architecture-overview)
+3. [Prerequisites](#prerequisites)
+4. [Setup & Installation](#setup--installation)
+5. [API & Server Configuration](#api--server-configuration)
+6. [Deployment Process](#deployment-process)
 7. [How to Test Multiplayer Functionality](#how-to-test-multiplayer-functionality)
 8. [Design Decisions](#design-decisions)
 9. [Feature Summary](#feature-summary)
@@ -150,7 +161,7 @@ Should return `{}` with HTTP 200.
 
 ### Authentication (`src/pages/LoginPage.tsx`)
 
-Uses `authenticateCustom` with the username as the internal key:
+Uses `authenticateEmail` with a unique Player ID system. Each player gets a unique TTT-XXXXXX Player ID. Display names are stored separately and can be shared by multiple players. Login supports both Player ID and display name.
 
 ```typescript
 const customId = trimmedUsername.padEnd(6, "_"); // Nakama requires 6-128 bytes
@@ -179,13 +190,15 @@ To point at a remote server, change `localhost` and `7350` to your server's addr
 
 ### Registered RPC Endpoints
 
-| RPC ID              | Description                                | Payload                              |
-| ------------------- | ------------------------------------------ | ------------------------------------ |
-| `create_match`      | Creates a new authoritative match          | `{ gameMode: "classic" \| "timed" }` |
-| `list_matches`      | Lists open + in-progress matches           | `{ gameMode: "classic" \| "timed" }` |
-| `get_leaderboard`   | Top 10 global rankings with real usernames | `{}`                                 |
-| `get_player_stats`  | Current user's stats                       | `{}`                                 |
-| `reset_leaderboard` | Clear all leaderboard records (admin)      | `{}`                                 |
+| RPC ID                   | Description                                | Payload                              |
+| ------------------------ | ------------------------------------------ | ------------------------------------ |
+| `create_match`           | Creates a new authoritative match          | `{ gameMode: "classic" \| "timed" }` |
+| `list_matches`           | Lists open + in-progress matches           | `{ gameMode: "classic" \| "timed" }` |
+| `get_leaderboard`        | Top 10 global rankings with real usernames | `{}`                                 |
+| `get_player_stats`       | Current user's stats                       | `{}`                                 |
+| `reset_leaderboard`      | Clear all leaderboard records (admin)      | `{}`                                 |
+| `find_user_by_name`      | Resolve display name to Player ID(s)       | `{ username: string }`               |
+| `store_username_mapping` | Store display name to Player ID mapping    | `{ username, playerId }`             |
 
 ### WebSocket Opcodes
 
@@ -272,17 +285,6 @@ docker-compose restart nakama
 
 ---
 
-## 🚀 Live Deployment
-
-|                  | URL                                                              |
-| ---------------- | ---------------------------------------------------------------- |
-| 🎮 Game          | https://multiplayer-tictactoe-nakama.vercel.app                  |
-| ⚙️ Nakama Server | http://136.111.140.22:7350                                       |
-| 🖥️ Admin Console | http://136.111.140.22:7351                                       |
-| 📁 Source Code   | https://github.com/EshwarAkhilesh25/multiplayer-tictactoe-nakama |
-
----
-
 ## Troubleshooting
 
 ### Common Issues
@@ -359,8 +361,15 @@ docker-compose down -v
 
 ### Manual Testing — Two Browser Windows
 
-1. Open **http://localhost:3000** in **Window A** (normal)
-2. Open **http://localhost:3000** in **Window B** (Incognito / different browser)
+**Live:**
+
+1. Open **https://multiplayer-tictactoe-nakama.vercel.app** in **Window A**
+2. Open **https://multiplayer-tictactoe-nakama.vercel.app** in **Window B** (Incognito)
+
+**Local:**
+
+1. Open **http://localhost:3000** in **Window A**
+2. Open **http://localhost:3000** in **Window B** (Incognito)
 
 #### Test: Classic Game — Full Round Trip
 
@@ -491,6 +500,11 @@ On login, the frontend checks `localStorage` for a stored `activeMatch_<userId>`
 | Reconnection on refresh          | ✅     | `localStorage` match ID recovery                                    |
 | Match cleanup (finished)         | ✅     | Label `finished`, hidden from lobby                                 |
 | Leaderboard admin reset          | ✅     | `reset_leaderboard` RPC for maintenance                             |
+| Unique Player ID system          | ✅     | Auto-generated TTT-XXXXXX IDs                                       |
+| Display name support             | ✅     | Separate from Player ID, stored in Nakama                           |
+| Logout support                   | ✅     | Logout button in lobby                                              |
+| Opponent name display            | ✅     | Real names shown in match (PlayerA vs PlayerB)                      |
+| HTTPS/WSS production             | ✅     | Cloudflare Tunnel for secure connections                            |
 
 ---
 
