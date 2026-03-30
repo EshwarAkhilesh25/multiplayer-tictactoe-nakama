@@ -21,7 +21,7 @@ const resolveUsername = async (username: string): Promise<{ playerIds?: string[]
   const host = process.env.REACT_APP_NAKAMA_HOST || "localhost";
   const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
   const resp = await fetch(
-    `http://${host}:${port}/v2/rpc/find_user_by_name?http_key=defaulthttpkey`,
+    `https://${host}/v2/rpc/find_user_by_name?http_key=defaulthttpkey`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -107,7 +107,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
           const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
           
           // Update account display name via Nakama REST API
-          await fetch(`http://${host}:${port}/v2/account`, {
+          await fetch(`https://${host}/v2/account`, {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
@@ -129,7 +129,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
           const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
           const body = JSON.stringify(JSON.stringify({ username: trimmedName, playerId: newId }));
           await fetch(
-            `http://${host}:${port}/v2/rpc/store_username_mapping?http_key=defaulthttpkey`,
+            `https://${host}/v2/rpc/store_username_mapping?http_key=defaulthttpkey`,
             { method: "POST", headers: { "Content-Type": "application/json" }, body }
           );
         } catch (e) {
@@ -225,7 +225,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             // Fetch current display name from account
             let fetchedDisplayName = "";
             try {
-              const accResp = await fetch(`http://${host}:${port}/v2/account`, {
+              const accResp = await fetch(`https://${host}/v2/account`, {
                 method: "GET",
                 headers: { "Authorization": `Bearer ${session.token}` }
               });
@@ -243,7 +243,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             // If we have a name but the account doesn't, set it retroactively
             if (finalDisplayName && !fetchedDisplayName) {
               try {
-                await fetch(`http://${host}:${port}/v2/account`, {
+                await fetch(`https://${host}/v2/account`, {
                   method: "PUT",
                   headers: {
                     "Content-Type": "application/json",
@@ -259,7 +259,7 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
               localStorage.setItem("lastDisplayName", finalDisplayName);
               try {
                 await fetch(
-                  `http://${host}:${port}/v2/rpc/store_username_mapping?http_key=defaulthttpkey`,
+                  `https://${host}/v2/rpc/store_username_mapping?http_key=defaulthttpkey`,
                   {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
