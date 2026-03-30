@@ -34,6 +34,15 @@ code {
   }
 }
 
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0.3;
+  }
+}
+
 @keyframes float {
   0%, 100% {
     transform: translateY(0px) rotate(0deg);

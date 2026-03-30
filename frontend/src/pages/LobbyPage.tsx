@@ -5,6 +5,7 @@ import client from "../utils/nakamaClient";
 interface Props {
   session: Session;
   onJoinMatch: (matchId: string) => void;
+  onLogout: (reason?: string) => void;
 }
 
 interface Match {
@@ -30,7 +31,7 @@ const getMatchId = (match: any): string => {
   return String(match?.match_id || match?.matchId || "").trim();
 };
 
-const LobbyPage: React.FC<Props> = ({ session, onJoinMatch }) => {
+const LobbyPage: React.FC<Props> = ({ session, onJoinMatch, onLogout }) => {
   const [matches, setMatches] = useState<Match[]>([]);
   const [joinId, setJoinId] = useState("");
   const [loading, setLoading] = useState(false);
@@ -44,6 +45,17 @@ const LobbyPage: React.FC<Props> = ({ session, onJoinMatch }) => {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [searchingForOpponent, setSearchingForOpponent] = useState(false);
   const [waitingRoomMatchId, setWaitingRoomMatchId] = useState<string | null>(null);
+
+  const handleLogout = () => {
+    if (window.confirm("Are you sure you want to logout?")) {
+      // Keep playerId so user can easily log back in
+      // Only remove session-specific items
+      localStorage.removeItem("lastUsername");
+      localStorage.removeItem("deviceUniqueId");
+      localStorage.removeItem("lastDisplayName");
+      onLogout();
+    }
+  };
 
   const fetchMatches = useCallback(async () => {
     try {
@@ -359,24 +371,56 @@ const LobbyPage: React.FC<Props> = ({ session, onJoinMatch }) => {
                   <span style={{ color: "#7ad3ff" }}>{session.username || "Player"}</span>
                 </h1>
                 <p style={{ margin: "7px 0 0", color: "#9fb3d8", fontSize: "13px" }}>
-                  ID: {session.user_id?.substring(0, 12)} • {gameMode === "timed" ? "Timed queue" : "Classic queue"}
+                  <span style={{ fontFamily: "monospace", letterSpacing: "1px", color: "#a0c4ff" }}>
+                    {localStorage.getItem("playerId") || session.user_id?.substring(0, 12)}
+                  </span>
+                  {" "} • {gameMode === "timed" ? "Timed queue" : "Classic queue"}
                 </p>
               </div>
             </div>
-            <div
-              style={{
-                padding: "9px 14px",
-                borderRadius: "999px",
-                border: "1px solid rgba(84,255,157,0.35)",
-                color: "#7DFFC3",
-                background: "rgba(37,165,102,0.14)",
-                fontSize: "12px",
-                fontWeight: 700,
-                letterSpacing: "0.04em",
-                textTransform: "uppercase",
-              }}
-            >
-              Session Active
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div
+                style={{
+                  padding: "9px 14px",
+                  borderRadius: "999px",
+                  border: "1px solid rgba(84,255,157,0.35)",
+                  color: "#7DFFC3",
+                  background: "rgba(37,165,102,0.14)",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                }}
+              >
+                Session Active
+              </div>
+              <button
+                onClick={handleLogout}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  border: "1px solid rgba(255,107,107,0.5)",
+                  color: "#ff6b6b",
+                  background: "rgba(255,107,107,0.1)",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(255,107,107,0.2)";
+                  e.currentTarget.style.borderColor = "rgba(255,107,107,0.7)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(255,107,107,0.1)";
+                  e.currentTarget.style.borderColor = "rgba(255,107,107,0.5)";
+                }}
+              >
+                🚪 Logout
+              </button>
             </div>
           </div>
         </section>

@@ -6,36 +6,179 @@ interface Props {
   onLogin: (session: Session) => void;
 }
 
+// Generate a unique 8-char player ID
+const generatePlayerId = (): string => {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let id = "TTT-";
+  for (let i = 0; i < 6; i++) {
+    id += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return id;
+};
+
+// Resolve a username to a Player ID via unauthenticated RPC
+const resolveUsername = async (username: string): Promise<{ playerId?: string; error?: string }> => {
+  const host = process.env.REACT_APP_NAKAMA_HOST || "127.0.0.1";
+  const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
+  const resp = await fetch(
+    `http://${host}:${port}/v2/rpc/find_user_by_name?http_key=defaulthttpkey`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(JSON.stringify({ username }))
+    }
+  );
+  if (!resp.ok) {
+    const errText = await resp.text();
+    console.error("RPC error:", errText);
+    return { error: "Failed to look up username. Try using your Player ID." };
+  }
+  const json = await resp.json();
+  // Nakama wraps the response: { payload: "{...}" }
+  const data = json.payload ? JSON.parse(json.payload) : json;
+  if (data.error) return { error: data.message };
+  return { playerId: data.playerId };
+};
+
 const LoginPage: React.FC<Props> = ({ onLogin }) => {
-  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [loginInput, setLoginInput] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isRegister, setIsRegister] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [registeredId, setRegisteredId] = useState<string | null>(null);
+  
+  // Load saved login input and check for logout reason
+  React.useEffect(() => {
+    const savedPlayerId = localStorage.getItem("playerId");
+    const savedDisplayName = localStorage.getItem("lastDisplayName");
+    // Pre-fill with Player ID if available, otherwise display name
+    if (savedPlayerId) {
+      setLoginInput(savedPlayerId);
+    } else if (savedDisplayName) {
+      setLoginInput(savedDisplayName);
+    }
+    if (savedDisplayName) {
+      setDisplayName(savedDisplayName);
+    }
+    const logoutReason = localStorage.getItem("logoutReason");
+    if (logoutReason) {
+      setError(logoutReason);
+      localStorage.removeItem("logoutReason");
+    }
+  }, []);
 
-  const handleLogin = async () => {
-    if (!username.trim()) {
-      setError("Please enter a username");
-      return;
-    }
-    setLoading(true);
+  const handleSubmit = async () => {
     setError("");
-    try {
-      const trimmedUsername = username.trim();
-      // Nakama requires custom ID to be 6-128 bytes, pad if needed
-      const customId = trimmedUsername.padEnd(6, "_");
-      const session = await client.authenticateCustom(customId, true, trimmedUsername);
-      localStorage.setItem("lastUsername", trimmedUsername);
-      onLogin(session);
-    } catch (e: any) {
-      console.error("Login error:", e);
-      let msg = "Failed to connect. Is the server running?";
-      if (e?.status) {
-        try { msg = `Server error ${e.status}: ${await e.text()}`; } catch { msg = `Server error ${e.status}`; }
-      } else if (e instanceof Error) {
-        msg = e.message;
+    
+    if (isRegister) {
+      // --- REGISTER FLOW ---
+      const trimmedName = displayName.trim();
+      if (!trimmedName) { setError("Display name cannot be empty"); return; }
+      if (trimmedName.length < 3) { setError("Display name must be at least 3 characters"); return; }
+      if (trimmedName.length > 30) { setError("Display name must be 30 characters or less"); return; }
+      const validNameRegex = /^[a-zA-Z0-9\s_-]+$/;
+      if (!validNameRegex.test(trimmedName)) {
+        setError("Display name can only contain letters, numbers, spaces, underscores, and hyphens");
+        return;
       }
-      setError(msg);
+      if (!password) { setError("Password cannot be empty"); return; }
+      if (password.length < 8) { setError("Password must be at least 8 characters"); return; }
+      if (password !== confirmPassword) { setError("Passwords do not match"); return; }
+      
+      setLoading(true);
+      try {
+        const newId = generatePlayerId();
+        const email = `${newId.toLowerCase()}@tictactoe.game`;
+        
+        const session = await client.authenticateEmail(
+          email, password, true, trimmedName
+        );
+        
+        // Save the Player ID locally
+        localStorage.setItem("playerId", newId);
+        localStorage.setItem("lastDisplayName", trimmedName);
+
+        // Store username mapping in backend for future lookups
+        try {
+          const host = process.env.REACT_APP_NAKAMA_HOST || "127.0.0.1";
+          const port = process.env.REACT_APP_NAKAMA_PORT || "7350";
+          const body = JSON.stringify(JSON.stringify({ username: trimmedName, playerId: newId }));
+          await fetch(
+            `http://${host}:${port}/v2/rpc/store_username_mapping?http_key=defaulthttpkey`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body }
+          );
+        } catch (e) {
+          console.error("Failed to store username mapping:", e);
+          // Continue anyway - user can still login with Player ID
+        }
+
+        // Show the Player ID to the user before proceeding
+        setRegisteredId(newId);
+        
+        // Auto-proceed after showing ID
+        setTimeout(() => {
+          onLogin(session);
+        }, 5000);
+      } catch (e: any) {
+        console.error("Register error:", e);
+        let msg = "Failed to connect. Is the server running?";
+        if (e?.status) {
+          try { msg = `Server error ${e.status}: ${await e.text()}`; } catch { msg = `Server error ${e.status}`; }
+        } else if (e instanceof Error) { msg = e.message; }
+        setError(msg);
+      }
+      setLoading(false);
+    } else {
+      // --- LOGIN FLOW ---
+      const trimmedInput = loginInput.trim();
+      if (!trimmedInput) { setError("Username or Player ID cannot be empty"); return; }
+      if (!password) { setError("Password cannot be empty"); return; }
+      
+      setLoading(true);
+      try {
+        let resolvedId: string;
+        
+        // Check if input looks like a Player ID (starts with TTT-)
+        if (trimmedInput.toUpperCase().startsWith("TTT-")) {
+          resolvedId = trimmedInput.toUpperCase();
+        } else {
+          // Treat as username — resolve to Player ID via backend
+          const result = await resolveUsername(trimmedInput);
+          if (result.error) {
+            setError(result.error);
+            setLoading(false);
+            return;
+          }
+          resolvedId = result.playerId!;
+        }
+        
+        const email = `${resolvedId.toLowerCase()}@tictactoe.game`;
+        const session = await client.authenticateEmail(email, password, false);
+        
+        localStorage.setItem("playerId", resolvedId);
+        localStorage.setItem("lastDisplayName", session.username || "");
+        onLogin(session);
+      } catch (e: any) {
+        console.error("Login error:", e);
+        let msg = "Failed to connect. Is the server running?";
+        if (e?.statusCode === 401 || e?.status === 401) {
+          msg = "Incorrect password. Please try again.";
+        } else if (e?.statusCode === 404 || e?.status === 404) {
+          msg = "Account not found. Please check your credentials or register.";
+        } else if (e?.message?.includes("User account not found")) {
+          msg = "Account not found. Please check your credentials or register.";
+        } else if (e?.message?.includes("Invalid credentials")) {
+          msg = "Incorrect password. Please try again.";
+        } else if (e?.status) {
+          try { msg = `Server error ${e.status}: ${await e.text()}`; } catch { msg = `Server error ${e.status}`; }
+        } else if (e instanceof Error) { msg = e.message; }
+        setError(msg);
+      }
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -203,91 +346,232 @@ const LoginPage: React.FC<Props> = ({ onLogin }) => {
             </div>
           </div>
         </div>
-        <input
-          type="text"
-          placeholder="Enter your username"
-          value={username}
-          onChange={e => setUsername(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && handleLogin()}
-          style={{
-            width: "100%",
-            padding: "16px",
-            borderRadius: "12px",
-            border: "2px solid rgba(233, 69, 96, 0.3)",
-            backgroundColor: "rgba(15, 52, 96, 0.6)",
-            color: "white",
-            fontSize: "18px",
-            marginBottom: "16px",
-            boxSizing: "border-box",
-            outline: "none",
-            transition: "all 0.3s ease"
-          }}
-          onFocus={(e) => {
-            e.target.style.borderColor = "#e94560";
-            e.target.style.boxShadow = "0 0 20px rgba(233, 69, 96, 0.3)";
-          }}
-          onBlur={(e) => {
-            e.target.style.borderColor = "rgba(233, 69, 96, 0.3)";
-            e.target.style.boxShadow = "none";
-          }}
-        />
-        {error && (
-          <div style={{
-            backgroundColor: "rgba(255, 107, 107, 0.1)",
-            border: "1px solid rgba(255, 107, 107, 0.5)",
-            borderRadius: "8px",
-            padding: "12px",
-            marginBottom: "16px",
-            textAlign: "center",
-            color: "#ff6b6b",
-            animation: "shake 0.5s"
-          }}>
-            ⚠️ {error}
+        {/* === REGISTRATION SUCCESS: Show Player ID === */}
+        {registeredId ? (
+          <div style={{ textAlign: "center" }}>
+            <div style={{
+              backgroundColor: "rgba(74, 222, 128, 0.1)",
+              border: "2px solid rgba(74, 222, 128, 0.5)",
+              borderRadius: "16px",
+              padding: "24px",
+              marginBottom: "20px"
+            }}>
+              <p style={{ color: "#4ade80", fontSize: "16px", fontWeight: 600, marginBottom: "12px" }}>
+                Account Created Successfully!
+              </p>
+              <p style={{ color: "#aaa", fontSize: "13px", marginBottom: "16px" }}>
+                Save your Player ID below. You'll need it to log in.
+              </p>
+              <div style={{
+                background: "rgba(0,0,0,0.4)",
+                borderRadius: "12px",
+                padding: "16px",
+                fontFamily: "monospace",
+                fontSize: "28px",
+                fontWeight: 800,
+                color: "#fff",
+                letterSpacing: "4px",
+                marginBottom: "12px",
+                border: "1px solid rgba(255,255,255,0.15)",
+                userSelect: "all"
+              }}>
+                {registeredId}
+              </div>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(registeredId);
+                  setError("Player ID copied to clipboard!");
+                }}
+                style={{
+                  background: "rgba(74,222,128,0.15)",
+                  border: "1px solid rgba(74,222,128,0.4)",
+                  borderRadius: "8px",
+                  padding: "10px 20px",
+                  color: "#4ade80",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: "14px",
+                  marginBottom: "12px"
+                }}
+              >
+                Copy Player ID
+              </button>
+              {error && <p style={{ color: "#4ade80", fontSize: "13px" }}>{error}</p>}
+              <p style={{ color: "#888", fontSize: "12px", marginTop: "12px" }}>
+                Redirecting to lobby in 5 seconds...
+              </p>
+              <button
+                onClick={() => {
+                  const email = `${registeredId!.toLowerCase()}@tictactoe.game`;
+                  client.authenticateEmail(email, password, false).then(onLogin);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#7ad3ff",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  textDecoration: "underline",
+                  marginTop: "8px"
+                }}
+              >
+                Continue Now
+              </button>
+            </div>
           </div>
+        ) : (
+          <>
+            {/* === REGISTER FORM === */}
+            {isRegister ? (
+              <>
+                <input
+                  type="text"
+                  placeholder="Choose a display name"
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                  style={{
+                    width: "100%", padding: "16px", borderRadius: "12px",
+                    border: "2px solid rgba(233, 69, 96, 0.3)",
+                    backgroundColor: "rgba(15, 52, 96, 0.6)",
+                    color: "white", fontSize: "18px", marginBottom: "16px",
+                    boxSizing: "border-box", outline: "none", transition: "all 0.3s ease"
+                  }}
+                  onFocus={e => { e.target.style.borderColor = "#e94560"; e.target.style.boxShadow = "0 0 20px rgba(233,69,96,0.3)"; }}
+                  onBlur={e => { e.target.style.borderColor = "rgba(233,69,96,0.3)"; e.target.style.boxShadow = "none"; }}
+                />
+                <p style={{ color: "#888", fontSize: "12px", margin: "-10px 0 14px 4px" }}>
+                  Display names can be the same as other players
+                </p>
+              </>
+            ) : (
+              /* === LOGIN FORM: Username or Player ID field === */
+              <input
+                type="text"
+                placeholder="Username or Player ID"
+                value={loginInput}
+                onChange={e => setLoginInput(e.target.value)}
+                style={{
+                  width: "100%", padding: "16px", borderRadius: "12px",
+                  border: "2px solid rgba(233, 69, 96, 0.3)",
+                  backgroundColor: "rgba(15, 52, 96, 0.6)",
+                  color: "white", fontSize: "18px", marginBottom: "16px",
+                  boxSizing: "border-box", outline: "none", transition: "all 0.3s ease"
+                }}
+                onFocus={e => { e.target.style.borderColor = "#e94560"; e.target.style.boxShadow = "0 0 20px rgba(233,69,96,0.3)"; }}
+                onBlur={e => { e.target.style.borderColor = "rgba(233,69,96,0.3)"; e.target.style.boxShadow = "none"; }}
+              />
+            )}
+
+            {/* Password field (both modes) */}
+            <input
+              type="password"
+              placeholder="Enter your password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && !isRegister && handleSubmit()}
+              style={{
+                width: "100%", padding: "16px", borderRadius: "12px",
+                border: "2px solid rgba(0, 180, 216, 0.3)",
+                backgroundColor: "rgba(15, 52, 96, 0.6)",
+                color: "white", fontSize: "18px", marginBottom: "16px",
+                boxSizing: "border-box", outline: "none", transition: "all 0.3s ease"
+              }}
+              onFocus={e => { e.target.style.borderColor = "#00b4d8"; e.target.style.boxShadow = "0 0 20px rgba(0,180,216,0.3)"; }}
+              onBlur={e => { e.target.style.borderColor = "rgba(0,180,216,0.3)"; e.target.style.boxShadow = "none"; }}
+            />
+
+            {/* Confirm password (register only) */}
+            {isRegister && (
+              <input
+                type="password"
+                placeholder="Confirm your password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleSubmit()}
+                style={{
+                  width: "100%", padding: "16px", borderRadius: "12px",
+                  border: "2px solid rgba(0, 180, 216, 0.3)",
+                  backgroundColor: "rgba(15, 52, 96, 0.6)",
+                  color: "white", fontSize: "18px", marginBottom: "16px",
+                  boxSizing: "border-box", outline: "none", transition: "all 0.3s ease"
+                }}
+                onFocus={e => { e.target.style.borderColor = "#00b4d8"; e.target.style.boxShadow = "0 0 20px rgba(0,180,216,0.3)"; }}
+                onBlur={e => { e.target.style.borderColor = "rgba(0,180,216,0.3)"; e.target.style.boxShadow = "none"; }}
+              />
+            )}
+
+            {/* Error display */}
+            {error && (
+              <div style={{
+                backgroundColor: "rgba(255, 107, 107, 0.1)",
+                border: "1px solid rgba(255, 107, 107, 0.5)",
+                borderRadius: "8px", padding: "12px", marginBottom: "16px",
+                textAlign: "center", color: "#ff6b6b", animation: "shake 0.5s"
+              }}>
+                {error}
+              </div>
+            )}
+
+            {/* Submit button */}
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              style={{
+                width: "100%", padding: "18px", borderRadius: "12px", border: "none",
+                background: loading ? "#666" : isRegister
+                  ? "linear-gradient(135deg, #00b4d8 0%, #0077b6 100%)"
+                  : "linear-gradient(135deg, #e94560 0%, #ff6b9d 100%)",
+                color: "white", fontSize: "18px",
+                cursor: loading ? "not-allowed" : "pointer",
+                fontWeight: "bold",
+                boxShadow: loading ? "none" : isRegister
+                  ? "0 10px 30px rgba(0, 180, 216, 0.4)"
+                  : "0 10px 30px rgba(233, 69, 96, 0.4)",
+                transition: "all 0.3s ease",
+                transform: loading ? "scale(0.98)" : "scale(1)",
+                letterSpacing: "1px"
+              }}
+              onMouseEnter={e => { if (!loading) e.currentTarget.style.transform = "scale(1.05)"; }}
+              onMouseLeave={e => { if (!loading) e.currentTarget.style.transform = "scale(1)"; }}
+            >
+              {loading ? "Connecting..." : isRegister ? "Create Account" : "Login & Play"}
+            </button>
+
+            {/* Toggle register/login */}
+            <div style={{ marginTop: "20px", textAlign: "center" }}>
+              <button
+                onClick={() => {
+                  setIsRegister(!isRegister);
+                  setError("");
+                  setConfirmPassword("");
+                }}
+                style={{
+                  background: "none", border: "none", color: "#7ad3ff",
+                  cursor: "pointer", fontSize: "14px", fontWeight: 600,
+                  textDecoration: "underline", textUnderlineOffset: "4px"
+                }}
+              >
+                {isRegister ? "Already have an account? Login" : "New player? Create Account"}
+              </button>
+            </div>
+
+            {/* Info footer */}
+            <div style={{ marginTop: "24px", textAlign: "center", color: "#666", fontSize: "13px" }}>
+              {isRegister ? (
+                <>
+                  <p style={{ marginBottom: "8px" }}>You'll receive a unique Player ID after registering</p>
+                  <p>Multiple players can use the same display name</p>
+                </>
+              ) : (
+                <>
+                  <p style={{ marginBottom: "8px" }}>Login with your username or Player ID</p>
+                  <p>If multiple players share your name, use your Player ID</p>
+                </>
+              )}
+            </div>
+          </>
         )}
-        <button
-          onClick={handleLogin}
-          disabled={loading}
-          style={{
-            width: "100%",
-            padding: "18px",
-            borderRadius: "12px",
-            border: "none",
-            background: loading ? "#666" : "linear-gradient(135deg, #e94560 0%, #ff6b9d 100%)",
-            color: "white",
-            fontSize: "18px",
-            cursor: loading ? "not-allowed" : "pointer",
-            fontWeight: "bold",
-            boxShadow: loading ? "none" : "0 10px 30px rgba(233, 69, 96, 0.4)",
-            transition: "all 0.3s ease",
-            transform: loading ? "scale(0.98)" : "scale(1)",
-            letterSpacing: "1px"
-          }}
-          onMouseEnter={(e) => {
-            if (!loading) {
-              e.currentTarget.style.transform = "scale(1.05)";
-              e.currentTarget.style.boxShadow = "0 15px 40px rgba(233, 69, 96, 0.6)";
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (!loading) {
-              e.currentTarget.style.transform = "scale(1)";
-              e.currentTarget.style.boxShadow = "0 10px 30px rgba(233, 69, 96, 0.4)";
-            }
-          }}
-        >
-          {loading ? "🔄 Connecting..." : "🎮 Play Now"}
-        </button>
-        
-        <div style={{
-          marginTop: "30px",
-          textAlign: "center",
-          color: "#666",
-          fontSize: "13px"
-        }}>
-          <p style={{ marginBottom: "8px" }}>🏆 Compete with players worldwide</p>
-          <p>💯 Track your stats and climb the leaderboard</p>
-        </div>
       </div>
     </div>
   );

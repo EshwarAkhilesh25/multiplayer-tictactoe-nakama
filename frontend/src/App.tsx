@@ -72,6 +72,16 @@ function App() {
     setPage("lobby");
   };
 
+  const handleLogout = (reason?: string) => {
+    setSession(null);
+    setMatchId("");
+    setPage("login");
+    if (reason) {
+      // Store reason so LoginPage can show it
+      localStorage.setItem("logoutReason", reason);
+    }
+  };
+
   return (
     <div
       style={{ minHeight: "100vh", backgroundColor: "#1a1a2e", color: "white" }}
@@ -102,13 +112,14 @@ function App() {
         </div>
       )}
       {page === "lobby" && session && !checkingReconnect && (
-        <LobbyPage session={session} onJoinMatch={handleJoinMatch} />
+        <LobbyPage session={session} onJoinMatch={handleJoinMatch} onLogout={handleLogout} />
       )}
       {page === "game" && session && (
         <GamePage
           session={session}
           matchId={matchId}
           onLeave={handleBackToLobby}
+          onLogout={handleLogout}
         />
       )}
     </div>
