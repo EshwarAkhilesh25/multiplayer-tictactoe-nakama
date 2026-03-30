@@ -125,6 +125,7 @@ const matchLeave = function(
       mState.status = "finished";
       mState.winner = remainingPlayerId;
       mState.winnerSymbol = mState.players[remainingPlayerId].symbol;
+      mState.currentTurn = ""; // Clear current turn when game ends
 
       const leaveMessage = {
         type: "player_left",
@@ -197,6 +198,7 @@ const matchLoop = function(
       mState.winner = Object.values(mState.players).find(
         p => p.symbol === winnerSymbol
       )?.userId || null;
+      mState.currentTurn = ""; // Clear current turn when game ends
 
       // update leaderboard
       if (mState.winner) {
@@ -225,6 +227,7 @@ if (loserId) {
     // check for draw
     if (checkDraw(mState.board)) {
       mState.status = "finished";
+      mState.currentTurn = ""; // Clear current turn when game ends
 
       // give both players 1 point for draw
       for (const playerId of mState.playerOrder) {

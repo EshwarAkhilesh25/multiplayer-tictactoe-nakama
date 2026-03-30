@@ -142,13 +142,44 @@ const matchJoin = function (ctx, logger, nk, dispatcher, tick, state, presences)
 
         }
 
+        // Look up the user's display name from their account
+        var displayName = presence.username; // fallback to username (Player ID)
+        try {
+            var users = nk.usersGetId([presence.userId]);
+            if (users && users.length > 0 && users[0].displayName) {
+                displayName = users[0].displayName;
+            } else if (users && users.length > 0) {
+                var nakamaUsername = users[0].username || "";
+                // For old accounts, the Nakama username IS the display name (not TTT- format)
+                if (nakamaUsername && nakamaUsername.toUpperCase().indexOf("TTT-") !== 0) {
+                    displayName = nakamaUsername;
+                    logger.info("Using Nakama username as display name (old account): " + displayName);
+                } else if (nakamaUsername) {
+                    // New account with TTT- Player ID but no displayName — try reverse lookup
+                    try {
+                        var reverseObjs = nk.storageRead([
+                            { collection: "user_mappings", key: "player_" + nakamaUsername.toUpperCase(), userId: "00000000-0000-0000-0000-000000000000" }
+                        ]);
+                        if (reverseObjs.length > 0 && reverseObjs[0].value.displayName) {
+                            displayName = reverseObjs[0].value.displayName;
+                            logger.info("Resolved display name from reverse mapping: " + displayName);
+                        }
+                    } catch (e2) {
+                        logger.info("No reverse mapping found for " + nakamaUsername);
+                    }
+                }
+            }
+        } catch (e) {
+            logger.warn("Failed to look up display name for " + presence.userId + ": " + e);
+        }
+
         const symbol = mState.playerOrder.length === 0 ? "X" : "O";
 
         mState.players[presence.userId] = {
 
             userId: presence.userId,
 
-            username: presence.username,
+            username: displayName,
 
             symbol,
 
@@ -158,7 +189,7 @@ const matchJoin = function (ctx, logger, nk, dispatcher, tick, state, presences)
 
         mState.playerOrder.push(presence.userId);
 
-        logger.info("Player joined: " + presence.username + " as " + symbol);
+        logger.info("Player joined: " + displayName + " as " + symbol);
 
     }
 
@@ -970,20 +1001,41 @@ const getLeaderboardRpc = function (ctx, logger, nk, payload) {
                 }
                 users.forEach(u => {
                     const uid = u.userId || u.id || u.user_id || u.accountId;
-                    userMap[uid] = u.username;
-                    logger.info("User uid=" + uid + " -> " + u.username);
+                    var dName = u.displayName || "";
+                    var pId = u.username || "";
+                    
+                    // If displayName is empty and username looks like a Player ID, do reverse lookup
+                    if (!dName && pId && pId.toUpperCase().indexOf("TTT-") === 0) {
+                        try {
+                            var revObjs = nk.storageRead([
+                                { collection: "user_mappings", key: "player_" + pId.toUpperCase(), userId: "00000000-0000-0000-0000-000000000000" }
+                            ]);
+                            if (revObjs.length > 0 && revObjs[0].value.displayName) {
+                                dName = revObjs[0].value.displayName;
+                            }
+                        } catch (e2) { /* no reverse mapping */ }
+                    }
+                    
+                    userMap[uid] = {
+                        displayName: dName || pId,
+                        playerId: pId
+                    };
                 });
             } catch (e) {
                 logger.error("usersGetId failed: " + e);
             }
         }
 
-        const enriched = records.map(r => ({
-            ownerId:  r.ownerId || "",
-            username: userMap[r.ownerId] || r.username || null,
-            score:    r.score   || 0,
-            rank:     r.rank    || 0,
-        })).filter(r => r.username);
+        const enriched = records.map(r => {
+            var info = userMap[r.ownerId] || {};
+            return {
+                ownerId:  r.ownerId || "",
+                username: info.displayName || r.username || null,
+                playerId: info.playerId || "",
+                score:    r.score   || 0,
+                rank:     r.rank    || 0,
+            };
+        }).filter(r => r.username);
 
         logger.info("Returning " + enriched.length + " enriched leaderboard records");
         return JSON.stringify({ records: enriched });
@@ -1065,12 +1117,272 @@ const listMatchesRpc = function (ctx, logger, nk, payload) {
     return JSON.stringify({ matches: filteredMatches });
 };
 
-/// <reference path="types.ts" />
+// Debug RPC: list all users to see what's actually stored
+const listAllUsersRpc = function (ctx, logger, nk, payload) {
+    logger.info("list_all_users called");
+    try {
+        // Nakama doesn't have a direct "list all users" API
+        // Instead, let's check if the current user exists and what their data looks like
+        if (ctx.userId) {
+            var users = nk.usersGetId([ctx.userId]);
+            if (users && users.length > 0) {
+                var user = users[0];
+                logger.info("Current user: " + JSON.stringify(user));
+                return JSON.stringify({ 
+                    users: [{
+                        userId: user.userId,
+                        username: user.username,
+                        email: user.email,
+                        displayName: user.displayName
+                    }]
+                });
+            }
+        }
+        logger.info("No users found");
+        return JSON.stringify({ users: [] });
+    } catch (e) {
+        logger.error("Failed to list users: " + e);
+        return JSON.stringify({ users: [] });
+    }
+};
 
-/// <reference path="game_logic.ts" />
+// Debug RPC: search for users with partial username match
+const searchUsersRpc = function (ctx, logger, nk, payload) {
+    var data = JSON.parse(payload);
+    var searchTerm = (data.search || "").trim();
+    
+    if (!searchTerm) {
+        return JSON.stringify({ error: "Search term is required" });
+    }
+    
+    logger.info("Searching for users containing: " + searchTerm);
+    
+    // Try to get all users from leaderboard entries (this shows us what usernames exist)
+    try {
+        var result = nk.leaderboardRecordsList("tictactoe_global", null, 100, null, null);
+        var records = result.records || [];
+        var ownerIds = records.map(function(r) { return r.ownerId; }).filter(Boolean);
+        
+        if (ownerIds.length > 0) {
+            var users = nk.usersGetId(ownerIds);
+            var matches = users.filter(function(u) {
+                return u.username && u.username.toLowerCase().indexOf(searchTerm.toLowerCase()) !== -1;
+            });
+            
+            logger.info("Found " + matches.length + " users containing '" + searchTerm + "'");
+            return JSON.stringify({ 
+                users: matches.map(function(u) {
+                    return {
+                        userId: u.userId,
+                        username: u.username,
+                        email: u.email,
+                        displayName: u.displayName
+                    };
+                })
+            });
+        }
+    } catch (e) {
+        logger.error("Search failed: " + e);
+    }
+    
+    return JSON.stringify({ users: [] });
+};
 
-/// <reference path="match_handler.ts" />
+// Debug RPC: check username for a specific Player ID
+const checkPlayerIdRpc = function (ctx, logger, nk, payload) {
+    var data = JSON.parse(payload);
+    var playerId = (data.playerId || "").trim().toUpperCase();
+    
+    if (!playerId) {
+        return JSON.stringify({ error: "Player ID is required" });
+    }
+    
+    logger.info("Checking Player ID: " + playerId);
+    
+    // Convert Player ID to email
+    var email = playerId.toLowerCase() + "@tictactoe.game";
+    
+    // Try to find user by email (Nakama doesn't have direct email lookup, so we'll try a different approach)
+    // First, let's try to authenticate to see if the account exists
+    try {
+        // We can't authenticate from here, but we can check the leaderboard for this email pattern
+        var result = nk.leaderboardRecordsList("tictactoe_global", null, 100, null, null);
+        var records = result.records || [];
+        var ownerIds = records.map(function(r) { return r.ownerId; }).filter(Boolean);
+        
+        if (ownerIds.length > 0) {
+            var users = nk.usersGetId(ownerIds);
+            var user = users.find(function(u) {
+                return u.email && u.email.toLowerCase() === email;
+            });
+            
+            if (user) {
+                logger.info("Found user for Player ID " + playerId + ": " + JSON.stringify(user));
+                return JSON.stringify({ 
+                    found: true,
+                    userId: user.userId,
+                    username: user.username,
+                    email: user.email,
+                    displayName: user.displayName
+                });
+            }
+        }
+    } catch (e) {
+        logger.error("Check failed: " + e);
+    }
+    logger.info("No user found for Player ID: " + playerId);
+    return JSON.stringify({ found: false });
+};
 
+// Store username mapping when user registers (supports multiple users per display name)
+const storeUsernameMappingRpc = function (ctx, logger, nk, payload) {
+    var data = JSON.parse(payload);
+    var username = (data.username || "").trim();
+    var playerId = (data.playerId || "").trim().toUpperCase();
+    
+    if (!username || !playerId) {
+        return JSON.stringify({ error: "Username and Player ID are required" });
+    }
+    
+    logger.info("Storing username mapping: " + username + " -> " + playerId);
+    
+    try {
+        var mapKey = "username_map_" + username.toLowerCase();
+        var globalUserId = "00000000-0000-0000-0000-000000000000";
+        
+        // Read existing mappings for this display name
+        var existing = [];
+        try {
+            var objects = nk.storageRead([
+                { collection: "user_mappings", key: mapKey, userId: globalUserId }
+            ]);
+            if (objects.length > 0 && objects[0].value.playerIds) {
+                existing = objects[0].value.playerIds;
+            } else if (objects.length > 0 && objects[0].value.playerId) {
+                existing = [objects[0].value.playerId];
+            }
+        } catch (e) {
+            logger.info("No existing mapping for " + username);
+        }
+        
+        // Add new playerId if not already present
+        if (existing.indexOf(playerId) === -1) {
+            existing.push(playerId);
+        }
+        
+        var write = {
+            collection: "user_mappings",
+            key: mapKey,
+            userId: globalUserId,
+            value: { playerIds: existing, username: username },
+            permissionRead: 2,
+            permissionWrite: 0
+        };
+        // Also store reverse mapping: playerId -> displayName
+        var reverseWrite = {
+            collection: "user_mappings",
+            key: "player_" + playerId,
+            userId: globalUserId,
+            value: { displayName: username, playerId: playerId },
+            permissionRead: 2,
+            permissionWrite: 0
+        };
+        nk.storageWrite([write, reverseWrite]);
+        logger.info("Successfully stored username mapping (" + existing.length + " accounts with name '" + username + "')");
+        return JSON.stringify({ success: true });
+    } catch (e) {
+        logger.error("Failed to store username mapping: " + e);
+        return JSON.stringify({ error: "Failed to store mapping" });
+    }
+};
+
+const findUserByNameRpc = function (ctx, logger, nk, payload) {
+    var parsed = payload;
+    if (typeof payload === "string") {
+        try { parsed = JSON.parse(payload); } catch(e) { /* ignore */ }
+    }
+    if (typeof parsed === "string") {
+        try { parsed = JSON.parse(parsed); } catch(e) { /* ignore */ }
+    }
+    
+    var username = (parsed.username || "").trim();
+    
+    if (!username) {
+        throw Error("Username is required");
+    }
+    
+    logger.info("find_user_by_name: searching for '" + username + "'");
+    
+    try {
+        var usernameMapKey = "username_map_" + username.toLowerCase();
+        var globalUserId = "00000000-0000-0000-0000-000000000000";
+        var objects = nk.storageRead([
+            { collection: "user_mappings", key: usernameMapKey, userId: globalUserId }
+        ]);
+        
+        if (objects.length > 0) {
+            var mapping = objects[0].value;
+            var playerIds = mapping.playerIds || (mapping.playerId ? [mapping.playerId] : []);
+            logger.info("Found " + playerIds.length + " account(s) for name '" + username + "' from storage");
+            return JSON.stringify({ playerIds: playerIds });
+        }
+        
+        // Fallback: look up old accounts where Nakama username IS the display name
+        logger.info("No storage mapping found, trying usersGetUsername for old accounts...");
+        var variations = [username, username.toLowerCase(), username.charAt(0).toUpperCase() + username.slice(1).toLowerCase()];
+        for (var v = 0; v < variations.length; v++) {
+            var variation = variations[v];
+            logger.info("Trying usersGetUsername with: '" + variation + "'");
+            try {
+                var users = nk.usersGetUsername([variation]);
+                logger.info("usersGetUsername returned " + (users ? users.length : 0) + " results for '" + variation + "'");
+                if (users && users.length > 0) {
+                    // Old account found - the Nakama username IS the name
+                    // For old accounts, email is <name>@tictactoe.game, so the "Player ID" is the username
+                    var foundIds = [];
+                    for (var i = 0; i < users.length; i++) {
+                        var u = users[i];
+                        var pid = u.username || "";
+                        if (pid) {
+                            foundIds.push(pid);
+                            logger.info("Found old account: username=" + u.username + " userId=" + u.userId + " email=" + u.email);
+                        }
+                    }
+                    if (foundIds.length > 0) {
+                        logger.info("Returning " + foundIds.length + " old account IDs for '" + username + "': " + JSON.stringify(foundIds));
+                        // Cache this mapping for future lookups
+                        try {
+                            var cacheWrite = {
+                                collection: "user_mappings",
+                                key: "username_map_" + username.toLowerCase(),
+                                userId: globalUserId,
+                                value: { playerIds: foundIds, username: username },
+                                permissionRead: 2,
+                                permissionWrite: 0
+                            };
+                            nk.storageWrite([cacheWrite]);
+                        } catch (we) { logger.warn("Failed to cache mapping: " + we); }
+                        
+                        return JSON.stringify({ playerIds: foundIds });
+                    }
+                }
+            } catch (ue) {
+                logger.info("usersGetUsername threw exception for '" + variation + "': " + ue);
+                // usersGetUsername throws if not found, that's ok
+            }
+        }
+        
+        logger.info("No accounts found with name: " + username);
+        return JSON.stringify({ 
+            error: "not_found", 
+            message: "No account found with that name. Please check your spelling or register a new account." 
+        });
+        
+    } catch (e) {
+        logger.error("Search failed: " + e);
+        return JSON.stringify({ error: "not_found", message: "Username lookup failed. Please try again." });
+    }
+};
 /// <reference path="rpcs.ts" />
 
 /// <reference types="nakama-runtime" />
@@ -1120,6 +1432,16 @@ function InitModule(ctx, logger, nk, initializer) {
     initializer.registerRpc("get_player_stats", getPlayerStatsRpc);
 
     initializer.registerRpc("list_matches", listMatchesRpc);
+
+    initializer.registerRpc("find_user_by_name", findUserByNameRpc);
+
+    initializer.registerRpc("list_all_users", listAllUsersRpc);
+
+    initializer.registerRpc("search_users", searchUsersRpc);
+
+    initializer.registerRpc("check_player_id", checkPlayerIdRpc);
+
+    initializer.registerRpc("store_username_mapping", storeUsernameMappingRpc);
 
     logger.info("Tic-Tac-Toe module loaded!");
 
